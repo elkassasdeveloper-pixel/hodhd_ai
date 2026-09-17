@@ -100,7 +100,7 @@ class _AiChatView extends StatelessWidget {
           cubit.clearPendingSharedFile();
         },
         builder: (context, state) {
-          if (state.needsModelDownload) {
+          if (state.needsModelDownload && !state.useOnlineModel) {
             return Center(
               child: Padding(
                 padding: const EdgeInsets.all(24),
@@ -156,7 +156,7 @@ class _AiChatView extends StatelessWidget {
             );
           }
 
-          if (!state.modelReady) {
+          if (!state.modelReady && !state.useOnlineModel) {
             return Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,

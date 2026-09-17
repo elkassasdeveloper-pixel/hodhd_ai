@@ -14,6 +14,7 @@ import 'package:hodhd_ai/service/ai_model_config.dart';
 import 'package:hodhd_ai/service/cache_helper.dart';
 import 'package:hodhd_ai/service/chat_database.dart';
 import 'package:hodhd_ai/service/chat_sync/chat_sync_service.dart';
+import 'package:hodhd_ai/service/online_model/online_model_service.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:llamadart/llamadart.dart';
@@ -47,6 +48,8 @@ class AiChatCubit extends Cubit<AiChatState> {
       CacheHelper.getData('useAudioTranscription') as bool? ?? true,
       chatSyncEnabled:
       CacheHelper.getData('chatSyncEnabled') as bool? ?? false,
+      useOnlineModel:
+      CacheHelper.getData('useOnlineModel') as bool? ?? false,
     ),
   ) {
     _init();
@@ -78,6 +81,7 @@ class AiChatCubit extends Cubit<AiChatState> {
 
   static const int _multimodalMaxImageEdge = 384;
   final ChatSyncService _chatSync = ChatSyncService();
+  final OnlineModelService _onlineModel = OnlineModelService();
 
   Future<void> _init() async {
     await _loadHistory();
@@ -644,6 +648,11 @@ class AiChatCubit extends Cubit<AiChatState> {
     emit(state.copyWith(chatSyncEnabled: value));
   }
 
+  void setUseOnlineModel(bool value) {
+    CacheHelper.saveData(key: 'useOnlineModel', value: value);
+    emit(state.copyWith(useOnlineModel: value));
+  }
+
   // ====================== HISTORY / MESSAGE LIST ======================
 
   Future<void> _loadHistory() async {
@@ -795,7 +804,8 @@ class AiChatCubit extends Cubit<AiChatState> {
         ('🖼️ create() loop finished. Buffer: ${buffer.toString()}');
         stopwatch.stop();
         _appendStats(stopwatch.elapsedMilliseconds, tokenCount, aiMsg.createdAt);
-      } else if (userMsg.customProperties?['type'] == 'audio') {
+      }
+      else if (userMsg.customProperties?['type'] == 'audio') {
         final audioPath = userMsg.customProperties!['path'] as String;
         final useTranscription = state.useAudioTranscription;
 
@@ -883,7 +893,21 @@ class AiChatCubit extends Cubit<AiChatState> {
         }
 
         _updateLastMessage('...', aiMsg.createdAt);
-
+        if (state.useOnlineModel) {
+          debugPrint('[AiChatCubit] routing to ONLINE model');
+          await for (final token in _onlineModel.generate(
+            combinedText,
+            maxTokens: state.maxTokens,
+          )) {
+            tokenCount++;
+            buffer.write(token);
+            final cleaned = _stripThinkingAndStops(buffer.toString());
+            _updateLastMessage(cleaned.text, aiMsg.createdAt);
+            if (cleaned.stopped) break;
+          }
+          debugPrint('[AiChatCubit] online generation finished, tokenCount=$tokenCount, buffer="${buffer.toString()}"');
+        } else {
+          debugPrint('[AiChatCubit] routing to LOCAL model');
         final prompt = _buildPrompt(combinedText);
 
         await for (final token in _engine!.generate(
@@ -899,7 +923,7 @@ class AiChatCubit extends Cubit<AiChatState> {
           final cleaned = _stripThinkingAndStops(buffer.toString());
           _updateLastMessage(cleaned.text, aiMsg.createdAt);
           if (cleaned.stopped) break;
-        }
+        }}
         stopwatch.stop();
         _appendStats(
           stopwatch.elapsedMilliseconds,
@@ -910,25 +934,40 @@ class AiChatCubit extends Cubit<AiChatState> {
             durationSeconds: audioDurationSeconds,
           ),
         );
-      } else {
-        final prompt = _buildPrompt(userMsg.text ?? '');
-
-        await for (final token in _engine!.generate(
-          prompt,
-          params: GenerationParams(
+      }
+      else {
+        if (state.useOnlineModel) {
+          await for (final token in _onlineModel.generate(
+            userMsg.text ?? '',
             maxTokens: state.maxTokens,
-            temp: 0.1,
-            topP: 0.95,
-          ),
-        )) {
-          tokenCount++;
-          buffer.write(token);
-          final cleaned = _stripThinkingAndStops(buffer.toString());
-          _updateLastMessage(cleaned.text, aiMsg.createdAt);
-          if (cleaned.stopped) break;
+          )) {
+            tokenCount++;
+            buffer.write(token);
+            final cleaned = _stripThinkingAndStops(buffer.toString());
+            _updateLastMessage(cleaned.text, aiMsg.createdAt);
+            if (cleaned.stopped) break;
+          }
+        } else {
+          final prompt = _buildPrompt(userMsg.text ?? '');
+
+          await for (final token in _engine!.generate(
+            prompt,
+            params: GenerationParams(
+              maxTokens: state.maxTokens,
+              temp: 0.1,
+              topP: 0.95,
+            ),
+          )) {
+            tokenCount++;
+            buffer.write(token);
+            final cleaned = _stripThinkingAndStops(buffer.toString());
+            _updateLastMessage(cleaned.text, aiMsg.createdAt);
+            if (cleaned.stopped) break;
+          }
         }
         stopwatch.stop();
         _appendStats(stopwatch.elapsedMilliseconds, tokenCount, aiMsg.createdAt);
+
       }
     } catch (e) {
       _updateLastMessage('Error: $e', aiMsg.createdAt);
@@ -1368,6 +1407,7 @@ class AiChatState {
     required this.activeLoraSelection,
     required this.useAudioTranscription,
     required this.chatSyncEnabled,
+    required this.useOnlineModel,
     this.pendingSharedFile,
   });
 
@@ -1378,6 +1418,7 @@ class AiChatState {
     String selectedLoraFile = kDefaultModelSelection,
     bool useAudioTranscription = true,
     bool chatSyncEnabled = false,
+    bool useOnlineModel = false,
   }) =>
       AiChatState(
         messages: const [],
@@ -1404,6 +1445,7 @@ class AiChatState {
         searchQuery: '',
         useAudioTranscription: useAudioTranscription,
         chatSyncEnabled: chatSyncEnabled,
+        useOnlineModel: useOnlineModel,
         activeModelName: AiModelConfig.modelName,
         activeLoraName: AiModelConfig.loraName,
         activeModelSelection: kDefaultModelSelection,
@@ -1517,6 +1559,7 @@ class AiChatState {
   /// next audio message immediately.
   final bool useAudioTranscription;
   final bool chatSyncEnabled;
+  final bool useOnlineModel;
 
   /// A file just received via the share intent (image or .wav audio) that
   /// the UI still needs to show a caption dialog for. Set by
@@ -1553,6 +1596,7 @@ class AiChatState {
     String? activeLoraSelection,
     bool? useAudioTranscription,
     bool? chatSyncEnabled,
+    bool? useOnlineModel,
     bool? needsModelDownload,
     Set<String>? downloadedAssets,
     Map<String, double>? downloadProgress,
@@ -1591,6 +1635,7 @@ class AiChatState {
       useAudioTranscription:
       useAudioTranscription ?? this.useAudioTranscription,
       chatSyncEnabled: chatSyncEnabled ?? this.chatSyncEnabled,
+      useOnlineModel: useOnlineModel ?? this.useOnlineModel,
       needsModelDownload: needsModelDownload ?? this.needsModelDownload,
       downloadedAssets: downloadedAssets ?? this.downloadedAssets,
       downloadProgress: downloadProgress ?? this.downloadProgress,

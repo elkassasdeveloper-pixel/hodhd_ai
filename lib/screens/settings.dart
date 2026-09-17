@@ -155,6 +155,8 @@ class SettingsPage extends StatelessWidget {
                   _AudioProcessingModeSection(),
                   const SizedBox(height: 24),
                   _ChatSyncSection(),
+                  const SizedBox(height: 24),
+                  _OnlineModelSection(),
                   ListTile(
                     leading: const Icon(Icons.delete_forever, color: Colors.red),
                     title: Text('Clear Chat History',style: AppFont.w500.getStyle(context, fontSize: 14),),
@@ -967,6 +969,49 @@ class _ChatSyncSection extends StatelessWidget {
             state.chatSyncEnabled
                 ? 'Syncing conversations online.'
                 : 'Conversations stay on this device only.',
+            style: AppFont.w400.getStyle(
+              context,
+              fontSize: 12,
+              color: context.colorS.secondary,
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _OnlineModelSection extends StatelessWidget {
+  const _OnlineModelSection();
+
+  @override
+  Widget build(BuildContext context) {
+    AiChatCubit aiChatCubit;
+    try {
+      aiChatCubit = context.read<AiChatCubit>();
+    } catch (_) {
+      return const SizedBox.shrink();
+    }
+
+    return BlocBuilder<AiChatCubit, AiChatState>(
+      bloc: aiChatCubit,
+      builder: (context, state) {
+        return SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          value: state.useOnlineModel,
+          onChanged: (value) => aiChatCubit.setUseOnlineModel(value),
+          title: Text(
+            'use_online_model',
+            style: AppFont.w400.getStyle(
+              context,
+              fontSize: 16,
+              color: context.colorS.primary,
+            ),
+          ),
+          subtitle: Text(
+            state.useOnlineModel
+                ? 'Talking to the online model at 192.168.1.111:8080. Images still use the local model.'
+                : 'Using the on-device local model.',
             style: AppFont.w400.getStyle(
               context,
               fontSize: 12,

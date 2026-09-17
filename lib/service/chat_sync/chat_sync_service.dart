@@ -13,7 +13,7 @@ class ChatSyncService {
 
   static const String _adminUserId = 'saeed';
   static const String _adminPassword = 'zakigommah';
-  static const int _messageMaxLength = 500;
+  static const int _messageMaxLength = 8000;
 
   String? _privateAdminToken;
   bool _ready = false;
