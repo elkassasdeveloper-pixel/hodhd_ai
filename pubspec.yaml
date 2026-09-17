@@ -30,6 +30,8 @@ dependencies:
   share_plus: ^13.3.0
   sqflite_common_ffi: ^2.4.3
   sherpa_onnx: ^1.13.8
+  dio: ^5.11.1
+  uuid: ^4.6.0
 
 dev_dependencies:
   flutter_test:

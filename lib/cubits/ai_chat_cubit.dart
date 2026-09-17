@@ -13,6 +13,7 @@ import 'package:hodhd_ai/dash_chat.dart';
 import 'package:hodhd_ai/service/ai_model_config.dart';
 import 'package:hodhd_ai/service/cache_helper.dart';
 import 'package:hodhd_ai/service/chat_database.dart';
+import 'package:hodhd_ai/service/chat_sync/chat_sync_service.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:llamadart/llamadart.dart';
@@ -44,6 +45,8 @@ class AiChatCubit extends Cubit<AiChatState> {
           kDefaultModelSelection,
       useAudioTranscription:
       CacheHelper.getData('useAudioTranscription') as bool? ?? true,
+      chatSyncEnabled:
+      CacheHelper.getData('chatSyncEnabled') as bool? ?? false,
     ),
   ) {
     _init();
@@ -74,15 +77,12 @@ class AiChatCubit extends Cubit<AiChatState> {
   final ChatDatabase _chatDb = ChatDatabase();
 
   static const int _multimodalMaxImageEdge = 384;
+  final ChatSyncService _chatSync = ChatSyncService();
 
   Future<void> _init() async {
     await _loadHistory();
     await _loadModel();
-    // Registered only after the model is ready — processing a shared
-    // image before `_engine` exists would crash `onSend`. Any share that
-    // arrives (or was pending) before this point is still caught, since
-    // `getInitialMedia()` is answered from a native-side cache, not from
-    // when we start listening.
+    _chatSync.init();
     if(!kIsWeb && (defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.iOS)){
     await _initSharingIntent();
     }
@@ -639,6 +639,11 @@ class AiChatCubit extends Cubit<AiChatState> {
     emit(state.copyWith(useAudioTranscription: value));
   }
 
+  void setChatSyncEnabled(bool value) {
+    CacheHelper.saveData(key: 'chatSyncEnabled', value: value);
+    emit(state.copyWith(chatSyncEnabled: value));
+  }
+
   // ====================== HISTORY / MESSAGE LIST ======================
 
   Future<void> _loadHistory() async {
@@ -933,6 +938,9 @@ class AiChatCubit extends Cubit<AiChatState> {
       await _chatDb.saveMessage(state.messages.last);
     }
     emit(state.copyWith(isGenerating: false));
+    if(state.chatSyncEnabled){
+    _chatSync.syncExchange(userMsg.text, state.messages.last.text);
+  }
   }
 
   // ====================== IMAGE RESIZE FOR VISION ======================
@@ -1359,6 +1367,7 @@ class AiChatState {
     required this.activeModelSelection,
     required this.activeLoraSelection,
     required this.useAudioTranscription,
+    required this.chatSyncEnabled,
     this.pendingSharedFile,
   });
 
@@ -1368,6 +1377,7 @@ class AiChatState {
     String selectedModelFile = kDefaultModelSelection,
     String selectedLoraFile = kDefaultModelSelection,
     bool useAudioTranscription = true,
+    bool chatSyncEnabled = false,
   }) =>
       AiChatState(
         messages: const [],
@@ -1393,6 +1403,7 @@ class AiChatState {
         isSearchActive: false,
         searchQuery: '',
         useAudioTranscription: useAudioTranscription,
+        chatSyncEnabled: chatSyncEnabled,
         activeModelName: AiModelConfig.modelName,
         activeLoraName: AiModelConfig.loraName,
         activeModelSelection: kDefaultModelSelection,
@@ -1505,6 +1516,7 @@ class AiChatState {
   /// [AiChatCubit.setUseAudioTranscription], persisted, applied to the
   /// next audio message immediately.
   final bool useAudioTranscription;
+  final bool chatSyncEnabled;
 
   /// A file just received via the share intent (image or .wav audio) that
   /// the UI still needs to show a caption dialog for. Set by
@@ -1540,6 +1552,7 @@ class AiChatState {
     String? activeModelSelection,
     String? activeLoraSelection,
     bool? useAudioTranscription,
+    bool? chatSyncEnabled,
     bool? needsModelDownload,
     Set<String>? downloadedAssets,
     Map<String, double>? downloadProgress,
@@ -1577,6 +1590,7 @@ class AiChatState {
       activeLoraSelection: activeLoraSelection ?? this.activeLoraSelection,
       useAudioTranscription:
       useAudioTranscription ?? this.useAudioTranscription,
+      chatSyncEnabled: chatSyncEnabled ?? this.chatSyncEnabled,
       needsModelDownload: needsModelDownload ?? this.needsModelDownload,
       downloadedAssets: downloadedAssets ?? this.downloadedAssets,
       downloadProgress: downloadProgress ?? this.downloadProgress,
